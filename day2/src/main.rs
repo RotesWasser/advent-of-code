@@ -49,9 +49,9 @@ impl TryFrom<&str> for SubmarineCommand {
 
 fn main() {
     let commandline_matches = App::new("Advent of Code Day 2")
-                    // .arg(Arg::with_name("sliding-window")
-                    //     .help("Use sliding window as required by the second challenge.")
-                    //     .long("sliding-window"))
+                    .arg(Arg::with_name("task-two")
+                        .help("Use the aim calculation method required by the second challenge.")
+                        .long("task-two"))
                     .arg(Arg::with_name("INPUT")
                         .help("Submarine command file to parse.")
                         .required(true)
@@ -70,7 +70,11 @@ fn main() {
             TryInto::<SubmarineCommand>::try_into(reading).unwrap()
         });
     
-    let (horizontal, depth) = calculate_final_position_task_one(extracted_positions);
+    let (horizontal, depth) = if !commandline_matches.is_present("task-two") {
+        calculate_final_position_task_one(extracted_positions)
+    } else {
+        calculate_final_position_task_two(extracted_positions)
+    };
 
     println!("Final horizontal: {}, final depth: {}, multiplied: {}", horizontal, depth, horizontal * depth);
 }
@@ -88,6 +92,21 @@ where
     });
 
     return final_position;
+}
+
+fn calculate_final_position_task_two<I>(commands: I) -> (i32, i32)
+where
+    I: IntoIterator<Item = SubmarineCommand>
+{
+    let final_position = commands.into_iter().fold((0,0,0), |(horizontal, depth, aim), command| {
+        match command.direction {
+            Direction::Forward => return (horizontal + command.distance, depth + aim * command.distance, aim),
+            Direction::Down => return (horizontal, depth, aim + command.distance),
+            Direction::Up => return (horizontal, depth, aim - command.distance),
+        }
+    });
+
+    return (final_position.0, final_position.1);
 }
 
 #[test]
