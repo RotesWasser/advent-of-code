@@ -20,7 +20,7 @@
                 }
             },
             "args": [
-                "${file}"
+                "${workspaceFolder}/inputs/day1"
             ],
             "cwd": "${workspaceFolder}"
         },
@@ -41,7 +41,7 @@
                 }
             },
             "args": [
-                "${file}"
+                "${workspaceFolder}/inputs/day1"
             ],
             "cwd": "${workspaceFolder}"
         }
