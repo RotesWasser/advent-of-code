@@ -1,16 +1,59 @@
-use std::error::Error;
+use std::{error::Error, collections::{BTreeMap, HashMap, hash_map::Entry}, cmp::{min, max}};
 
 use clap::{App, Arg};
 use regex::{self, Regex};
 
+#[derive(PartialEq, Eq, Hash, Debug)]
 struct Point2D {
     pub x: i32,
     pub y: i32
 }
 
+#[derive(PartialEq, Eq)]
 struct Line2D {
     pub from: Point2D,
     pub to: Point2D
+}
+
+struct Intersection {
+    pub position: Point2D,
+    pub count: u32
+}
+
+#[derive(PartialEq, Eq)]
+struct LineEvent<'a> {
+    pub event_type: LineEventType,
+    pub x: i32,
+    pub line: &'a Line2D
+}
+
+#[derive(PartialEq, Eq)]
+enum LineEventType {
+    HorizontalStart,
+    HorizontalEnd,
+    VerticalLine
+}
+
+impl<'a> LineEvent<'a> {
+    fn new(event_type: LineEventType, x: i32, line: &'a Line2D) -> LineEvent {
+        LineEvent {
+            event_type,
+            x,
+            line,
+        }
+    }
+}
+
+impl<'a> PartialOrd for LineEvent<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        return self.x.partial_cmp(&other.x);
+    }
+}
+
+impl<'a> Ord for LineEvent<'a> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        return self.x.cmp(&other.x);
+    }
 }
 
 impl TryFrom<&str> for Line2D {
@@ -55,10 +98,73 @@ fn main() {
         .split('\n')
         .filter(|x| !x.is_empty())
         .map(|x| x.try_into().unwrap())
+        .filter(|line: &Line2D| line.from.x == line.to.x || line.from.y == line.to.y)
         .collect();
 
-    
+    let intersections = get_intersections_of_vertical_and_horizontal_lines(lines);
 
+    let more_than_one_isect_count = intersections.iter().filter(|i| i.count > 1).count();
+
+    println!("Amount of intersections with more than one crossing line: {}", more_than_one_isect_count);
+}
+
+fn get_intersections_of_vertical_and_horizontal_lines(input_lines: Vec<Line2D>) -> Vec<Intersection> {
+    let mut living_lines: BTreeMap<i32, &Line2D> = BTreeMap::new();
+    let mut line_events: Vec<LineEvent> = vec![];
+    let mut intersections: HashMap<Point2D, Intersection> = HashMap::new();
+
+    for line in input_lines.iter() {
+        if line.from.x == line.to.x {
+            line_events.push(LineEvent::new(LineEventType::VerticalLine, line.from.x, line))
+        } else if line.from.y == line.to.y { 
+            line_events.push(LineEvent::new(LineEventType::HorizontalStart, min(line.from.x, line.to.x), line));
+            line_events.push(LineEvent::new(LineEventType::HorizontalEnd, max(line.from.x, line.to.x), line));
+        } else {
+            panic!("Cannot deal with non-axis-aligned lines.")
+        }
+    }
+
+    line_events.sort();
+
+    for event in line_events {
+        match event.event_type {
+            LineEventType::HorizontalStart => {
+                if living_lines.insert(event.line.from.y, event.line) != None {
+                    panic!("Tried to have two overlapping living lines.")
+                }
+            },
+            LineEventType::HorizontalEnd => {
+                living_lines.remove(&event.line.from.y);
+            },
+            LineEventType::VerticalLine => {
+                let vertical_line = event.line;
+                
+                let line_start = min(vertical_line.from.y, vertical_line.to.y);
+                let line_end = max(vertical_line.from.y, vertical_line.to.y);
+                
+
+                for (y, line) in living_lines.range(line_start..line_end) {
+                    let x = event.line.from.x;
+
+                    match intersections.entry(Point2D {x, y: *y}) {
+                        Entry::Occupied(mut occupied) => {
+                            occupied.get_mut().count += 1;
+                        },
+                        Entry::Vacant(vacant) => {
+                            vacant.insert(Intersection {
+                                position: Point2D {x, y: *y},
+                                count: 1
+                            });
+                        },
+                    }
+                }
+                
+                
+            },
+        }
+    }
+
+    return intersections.into_values().collect();
 }
 
 #[test]
@@ -69,4 +175,16 @@ fn test_parsing() {
     assert_eq!(res.from.y, -2);
     assert_eq!(res.to.x, -3);
     assert_eq!(res.to.y, -4);
+}
+
+#[test]
+fn intersection_simple() {
+    let l1: Line2D = "-1,0 -> 1,0".try_into().unwrap();
+    let l2: Line2D = "0,-1 -> 0,1".try_into().unwrap();
+
+    let intersections = get_intersections_of_vertical_and_horizontal_lines(vec![l1, l2]);
+
+    assert_eq!(intersections.len(), 1);
+    assert_eq!(intersections[0].position, Point2D {x: 0, y: 0});
+    assert_eq!(intersections[0].count, 1);
 }
