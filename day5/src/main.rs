@@ -1,24 +1,78 @@
-use std::{error::Error, cmp::{min, max}};
+use std::{error::Error, cmp::{min, max}, ops::{Sub, AddAssign}};
 
 use clap::{App, Arg};
 use regex::{self, Regex};
 
-struct Point2D {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Vector2D {
     pub x: i32,
     pub y: i32
 }
 
+impl Vector2D {
+    fn magnitude(&self) -> f64 {
+        let fx: f64 = self.x.pow(2).try_into().unwrap();
+        let fy: f64 = self.y.pow(2).try_into().unwrap();
+        return (fx + fy).sqrt();
+    }
+
+    fn new(x: i32, y: i32) -> Self {
+        return Vector2D {
+            x,y
+        };
+    }
+}
+
+impl AddAssign<Vector2D> for Vector2D {
+    fn add_assign(&mut self, rhs: Vector2D) {
+        self.x += rhs.x;
+        self.y += rhs.y;
+    }
+}
+
+impl Sub<Vector2D> for Vector2D {
+    type Output = Vector2D;
+
+    fn sub(self, rhs: Vector2D) -> Self::Output {
+        return Vector2D {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y
+        };
+    }
+}
+
+#[derive(Clone)]
 struct Line2D {
-    pub from: Point2D,
-    pub to: Point2D
+    pub from: Vector2D,
+    pub to: Vector2D
 }
 
 impl Line2D {
-    fn new(from: Point2D, to: Point2D) -> Self {
+    fn new(from: Vector2D, to: Vector2D) -> Self {
         return Line2D {
             from,
             to
         };
+    }
+
+    fn get_integer_step_vector(&self) -> Vector2D {
+        let dir_vector = self.to - self.from;
+        
+        return Vector2D {
+            x: Line2D::calc_step_component(dir_vector.x, dir_vector.magnitude()),
+            y: Line2D::calc_step_component(dir_vector.y, dir_vector.magnitude())
+        };
+    }
+
+    fn calc_step_component(component: i32, magnitude: f64) -> i32 {
+        let normalized = (component as f64) / magnitude;
+        if normalized < 0f64 {
+            return normalized.floor() as i32;
+        } else if normalized > 0f64 {
+            return normalized.ceil() as i32;
+        } else {
+            return 0;
+        }
     }
 }
 
@@ -34,11 +88,11 @@ impl TryFrom<&str> for Line2D {
             let caps = line_regex.captures_iter(&value).next().unwrap();
 
             Ok(
-                Line2D::new(Point2D{
+                Line2D::new(Vector2D{
                         x: caps["x1"].parse::<i32>().unwrap(),
                         y: caps["y1"].parse::<i32>().unwrap(),
                     },
-                    Point2D {
+                    Vector2D {
                         x: caps["x2"].parse::<i32>().unwrap(),
                         y: caps["y2"].parse::<i32>().unwrap(),
                     }
@@ -65,9 +119,10 @@ fn main() {
         .map(|x| x.try_into().unwrap())
         .collect();
 
-    let axis_aligned_lines: Vec<Line2D> = lines.into_iter().filter(|line| line.from.x == line.to.x || line.from.y == line.to.y).collect();
+    let axis_aligned_lines: Vec<Line2D> = lines.clone().into_iter().filter(|line| line.from.x == line.to.x || line.from.y == line.to.y).collect();
 
-    println!("Number of Points with overlaps: {}", calculate_intersections(axis_aligned_lines));
+    println!("Number of Points with overlaps, axis aligned only: {}", calculate_intersections(axis_aligned_lines));
+    println!("Number of Points with overlaps, including diagonals: {}", calculate_intersections(lines));
 }
 
 fn calculate_intersections(axis_aligned_lines: Vec<Line2D>) -> usize {
@@ -89,57 +144,26 @@ fn calculate_intersections(axis_aligned_lines: Vec<Line2D>) -> usize {
     let mut area = vec![vec![0;area_height]; area_width];
 
     for line in axis_aligned_lines.iter() {
-        if line.from.x == line.to.x {
-            // vertical
-            let y_start = min(line.from.y, line.to.y) - y_min;
-            let y_end = max(line.from.y, line.to.y) -y_min;
+        let mut current_pos = Vector2D::new(line.from.x - x_min, line.from.y - y_min);
+        let target_pos = Vector2D::new(line.to.x - x_min, line.to.y - y_min);
+        let direction = line.get_integer_step_vector();
+        
+        area[current_pos.x as usize][current_pos.y as usize] += 1;
+        loop {
+            current_pos += direction;
+            area[current_pos.x as usize][current_pos.y as usize] += 1;
 
-            for y in y_start..(y_end + 1) {
-                let areax: usize = (line.from.x - x_min).try_into().unwrap();
-                let areay: usize = y.try_into().unwrap();
-
-                area[areax][areay] += 1;
+            if current_pos == target_pos {
+                break;
             }
-        } else if line.from.y == line.to.y {
-            // horizontal
-            let x_start = min(line.from.x, line.to.x) - x_min;
-            let x_end = max(line.from.x, line.to.x) - x_min;
-
-            for x in x_start..(x_end + 1) {
-                let areax: usize = x.try_into().unwrap();
-                let areay: usize = (line.from.y - y_min).try_into().unwrap();
-
-                area[areax][areay] += 1;
-            }
-        } else {
-            panic!("Can't deal with non-axis-aligned lines.");
         }
     }
 
     return area.iter().flatten().filter(|x| (**x) > 1).count();
 }
 
-#[test]
-fn test_simple() {
-    let l1: Line2D = "-1,0 -> 1,0".try_into().unwrap();
-    let l2: Line2D = "0,-1 -> 0,1".try_into().unwrap();
-
-    let isects = calculate_intersections(vec![l1, l2]);
-    assert_eq!(isects, 1);
-}
-
-#[test]
-fn test_overlapping() {
-    let l1: Line2D = "-1,0 -> 1,0".try_into().unwrap();
-    let l2: Line2D = "-1,0 -> 1,0".try_into().unwrap();
-
-    let isects = calculate_intersections(vec![l1, l2]);
-    assert_eq!(isects, 3);
-}
-
-#[test]
-fn test_example_input() {
-    let lines: Vec<Line2D> = r"
+#[cfg(test)]
+const EXAMPLE_INPUT: &str = r"
 0,9 -> 5,9
 8,0 -> 0,8
 9,4 -> 3,4
@@ -149,7 +173,11 @@ fn test_example_input() {
 0,9 -> 2,9
 3,4 -> 1,4
 0,0 -> 8,8
-5,5 -> 8,2"
+5,5 -> 8,2";
+
+#[test]
+fn test_example_input_aa() {
+    let lines: Vec<Line2D> = EXAMPLE_INPUT
         .split('\n')
         .filter(|x| !x.is_empty())
         .map(|x| x.try_into().unwrap())
@@ -160,6 +188,54 @@ fn test_example_input() {
     let isects = calculate_intersections(axis_aligned_lines);
 
     assert_eq!(isects, 5);
+}
+
+#[test]
+fn test_example_input_with_diagonals_aa() {
+    let lines: Vec<Line2D> = EXAMPLE_INPUT
+        .split('\n')
+        .filter(|x| !x.is_empty())
+        .map(|x| x.try_into().unwrap())
+        .collect();
+
+    let isects = calculate_intersections(lines);
+
+    assert_eq!(isects, 12);
+}
+
+#[test]
+fn test_simple_aa() {
+    let l1: Line2D = "-1,0 -> 1,0".try_into().unwrap();
+    let l2: Line2D = "0,-1 -> 0,1".try_into().unwrap();
+
+    let isects = calculate_intersections(vec![l1, l2]);
+    assert_eq!(isects, 1);
+}
+
+#[test]
+fn test_overlapping_aa() {
+    let l1: Line2D = "-1,0 -> 1,0".try_into().unwrap();
+    let l2: Line2D = "-1,0 -> 1,0".try_into().unwrap();
+
+    let isects = calculate_intersections(vec![l1, l2]);
+    assert_eq!(isects, 3);
+}
+
+#[test]
+fn test_step_vector_calculation() {
+    let lines: Vec<Line2D> = vec![
+        "-5,-5 -> 5,5".try_into().unwrap(),
+        "100,0 -> 0,0".try_into().unwrap()
+    ];
+
+    let expected: Vec<Vector2D> = vec![
+        Vector2D::new(1,1),
+        Vector2D::new(-1,0)
+    ];
+
+    for (line, expected) in lines.into_iter().zip(expected) {
+        assert_eq!(line.get_integer_step_vector(), expected);
+    }
 }
 
 #[test]
