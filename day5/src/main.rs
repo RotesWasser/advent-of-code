@@ -3,7 +3,7 @@ use std::{error::Error, collections::{BTreeMap, HashMap, hash_map::Entry}, cmp::
 use clap::{App, Arg};
 use regex::{self, Regex};
 
-#[derive(PartialEq, Eq, Hash, Debug)]
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
 struct Point2D {
     pub x: i32,
     pub y: i32
@@ -15,6 +15,13 @@ struct Line2D {
     pub to: Point2D
 }
 
+impl Line2D {
+    fn get_multiplicity_at(&self, position: &Point2D) -> u32 {
+        return 1;
+    }
+}
+
+#[derive(PartialEq, Eq, Clone)]
 struct Intersection {
     pub position: Point2D,
     pub count: u32
@@ -108,15 +115,19 @@ fn main() {
     println!("Amount of intersections with more than one crossing line: {}", more_than_one_isect_count);
 }
 
+
 fn get_intersections_of_vertical_and_horizontal_lines(input_lines: Vec<Line2D>) -> Vec<Intersection> {
     let mut living_lines: BTreeMap<i32, &Line2D> = BTreeMap::new();
     let mut line_events: Vec<LineEvent> = vec![];
     let mut intersections: HashMap<Point2D, Intersection> = HashMap::new();
 
+    // TODO: Preprocess Lines to identify horizontal and vertical ones that overlap.
+    // TODO: Extend the Line2D implementation to allow for segments with overlap-counts.
+
     for line in input_lines.iter() {
         if line.from.x == line.to.x {
             line_events.push(LineEvent::new(LineEventType::VerticalLine, line.from.x, line))
-        } else if line.from.y == line.to.y { 
+        } else if line.from.y == line.to.y {
             line_events.push(LineEvent::new(LineEventType::HorizontalStart, min(line.from.x, line.to.x), line));
             line_events.push(LineEvent::new(LineEventType::HorizontalEnd, max(line.from.x, line.to.x), line));
         } else {
@@ -143,26 +154,28 @@ fn get_intersections_of_vertical_and_horizontal_lines(input_lines: Vec<Line2D>) 
                 let line_end = max(vertical_line.from.y, vertical_line.to.y);
                 
 
-                for (y, line) in living_lines.range(line_start..line_end) {
+                for (y, horizontal_line) in living_lines.range(line_start..line_end) {
                     let x = event.line.from.x;
+                    let intersection = Point2D {x, y: *y};
 
-                    match intersections.entry(Point2D {x, y: *y}) {
-                        Entry::Occupied(mut occupied) => {
-                            occupied.get_mut().count += 1;
-                        },
-                        Entry::Vacant(vacant) => {
-                            vacant.insert(Intersection {
-                                position: Point2D {x, y: *y},
-                                count: 1
-                            });
-                        },
-                    }
+                    let amount_of_lines = horizontal_line.get_multiplicity_at(&intersection) + vertical_line.get_multiplicity_at(&intersection);
+
+                    // Gaussian sum formula up to n-1
+                    let crossing_multiplicity = ((amount_of_lines - 1).pow(2) + (amount_of_lines - 1)) / 2;
+
+                    intersections.insert(intersection.clone(), Intersection {
+                        position: intersection,
+                        count: crossing_multiplicity
+                    });
                 }
                 
                 
             },
         }
     }
+
+    // We now know the vertical x horizontal intersections
+    // Iterate the lines to insert possible intersections 
 
     return intersections.into_values().collect();
 }
@@ -185,6 +198,18 @@ fn intersection_simple() {
     let intersections = get_intersections_of_vertical_and_horizontal_lines(vec![l1, l2]);
 
     assert_eq!(intersections.len(), 1);
-    assert_eq!(intersections[0].position, Point2D {x: 0, y: 0});
-    assert_eq!(intersections[0].count, 1);
+    assert_eq!(intersections.contains(&Intersection { position: Point2D {x:  0, y: 0}, count: 1 }), true);
+}
+
+#[test]
+fn intersection_overlapping() {
+    let l1: Line2D = "-1,0 -> 1,0".try_into().unwrap();
+    let l2: Line2D = "-1,0 -> 1,0".try_into().unwrap();
+
+    let intersections = get_intersections_of_vertical_and_horizontal_lines(vec![l1, l2]);
+
+    assert_eq!(intersections.len(), 3);
+    assert_eq!(intersections.contains(&Intersection { position: Point2D {x: -1, y: 0}, count: 1 }), true);
+    assert_eq!(intersections.contains(&Intersection { position: Point2D {x:  0, y: 0}, count: 1 }), true);
+    assert_eq!(intersections.contains(&Intersection { position: Point2D {x:  1, y: 0}, count: 1 }), true);
 }
