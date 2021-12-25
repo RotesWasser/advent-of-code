@@ -1,60 +1,88 @@
-use std::{error::Error};
+use std::{error::Error, collections::HashSet};
 
 use clap::{App, Arg};
 
 struct Heightmap {
     // indexed y, x
-    data: Vec<Vec<u32>>,
+    data: Vec<Vec<Point3D>>,
     width: usize,
     height: usize
 }
 
-struct LowPoint {
-    position: (usize, usize),
-    height: u32,
+#[derive(PartialEq, Eq, Hash, Debug)]
+struct Point3D {
+    x: usize,
+    y: usize,
+    z: u8
 }
 
-impl LowPoint {
-    fn new(x: usize, y: usize, height: u32) -> Self {
+impl Point3D {
+    fn new(x: usize, y: usize, z: u8) -> Self {
         return Self {
-            position: (x, y),
-            height
-        };
+            x, y, z
+        }
     }
 }
 
 impl Heightmap {
-    fn get_low_points(&self) -> Vec<LowPoint> {
-        let mut low_points: Vec<LowPoint> = vec![];
+    fn get_neighbours_of_point(&self, point: &Point3D) -> Vec<&Point3D>{
+        let mut neighbours = vec![];
 
-        for x in 0..self.width {
-            for y in 0..self.height {
-                let mut is_minimum = true;
-
-                if x != 0 {
-                    is_minimum &= self.data[y][x - 1] > self.data[y][x];
-                }
-
-                if x != self.width - 1 {
-                    is_minimum &= self.data[y][x + 1] > self.data[y][x];
-                }
-
-                if y != 0 {
-                    is_minimum &= self.data[y - 1][x] > self.data[y][x];
-                }
-
-                if y != self.height - 1 {
-                    is_minimum &= self.data[y + 1][x] > self.data[y][x];
-                }
-
-                
-                if is_minimum {
-                    low_points.push(LowPoint::new(x, y, self.data[y][x]));
-                }
-            }
+        if point.x != 0 {
+            neighbours.push(&self.data[point.y][point.x-1]);
         }
 
+        if point.x != self.width - 1 {
+            neighbours.push(&self.data[point.y][point.x + 1]);
+        }
+
+        if point.y != 0 {
+            neighbours.push(&self.data[point.y - 1][point.x]);
+        }
+
+        if point.y != self.height - 1 {
+            neighbours.push(&self.data[point.y + 1][point.x]);
+        }
+
+        return neighbours;
+    }
+
+    fn get_low_points(&self) -> Vec<&Point3D> {
+        let mut low_points: Vec<&Point3D> = vec![];
+
+        for grid_point in self.data.iter().flatten() {
+            let is_lowpoint = self.get_neighbours_of_point(grid_point)
+                .iter()
+                .fold(true, |acc, neighbour| acc && neighbour.z > grid_point.z);
+
+            if is_lowpoint {
+                low_points.push(grid_point);
+            }
+        }
         low_points
+    }
+
+    fn calculate_basin_size_for_lowpoint(&self, starting_point: &Point3D) -> usize {
+        let mut to_visit: HashSet<&Point3D> = HashSet::new();
+        let mut basin_points: HashSet<&Point3D> = HashSet::new();
+
+        to_visit.insert(starting_point);
+
+        while to_visit.len() > 0 {
+            let current_point = to_visit.iter().next().unwrap().clone();
+            to_visit.remove(current_point);
+
+            if current_point.z < 9 {
+                basin_points.insert(current_point);
+
+                let neighbours: HashSet<&Point3D> = HashSet::from_iter(self.get_neighbours_of_point(current_point).into_iter());
+                let unvisited: Vec<&Point3D> = neighbours.difference(&basin_points).map(|x| *x).collect();
+
+                to_visit.extend(unvisited.into_iter());
+            }
+        }
+        
+        return basin_points.len();
     }
 }
 
@@ -69,12 +97,17 @@ impl TryFrom<&str> for Heightmap {
             None => return Err("Can't work on an empty string!".into()),
         };
 
-        for line in value.lines() {
+        for (y, line) in value.lines().enumerate() {
             let mut line_heights = vec![];
 
-            for height_value in line.chars() {
+            for (x, height_value) in line.chars().enumerate() {
                  if height_value.is_numeric() {
-                    line_heights.push(height_value.to_digit(10).unwrap());
+                    line_heights.push(
+                        Point3D::new(
+                            x, 
+                            y, 
+                            height_value.to_digit(10).unwrap() as u8
+                    ));
                  }
             }
 
@@ -116,9 +149,17 @@ fn main() {
 
     let low_points = map.get_low_points();
 
-    let low_point_risk_sum = low_points.iter().fold(0, |acc, p| acc + p.height + 1);
+    let low_point_risk_sum: usize = low_points.iter().fold(0, |acc, p| acc + p.z as usize + 1);
+
+    let mut basin_sizes: Vec<usize> = low_points.iter().map(|lp| map.calculate_basin_size_for_lowpoint(*lp)).collect();
+    basin_sizes.sort();
+    basin_sizes.reverse();
+
+    let product_of_three_largest_basins = basin_sizes.iter().take(3).fold(1, |acc, size| acc * size);
 
     println!("Sum of risk levels of all lowpoints: {}", low_point_risk_sum);
+    println!("Product of sizes of three largest basins: {}", product_of_three_largest_basins);
+
 }
 
 #[cfg(test)]
@@ -135,16 +176,26 @@ fn test_map_parsing() {
 
     assert_eq!(map.width, 10);
     assert_eq!(map.height, 5);
-    assert_eq!(map.data[0][0], 2);
-    assert_eq!(map.data[4][9], 8);
+    assert_eq!(map.data[0][0], Point3D::new(0, 0, 2));
+    assert_eq!(map.data[4][9], Point3D::new(9, 4, 8));
 }
 
 #[test]
-fn test_example() {
+fn test_example_lowpoint_risk() {
     let map: Heightmap = EXAMPLE_STRING.try_into().unwrap();
 
     let low_points = map.get_low_points();
-    let sum = low_points.iter().fold(0, |acc, p| acc + p.height + 1);
+    let sum = low_points.iter().fold(0, |acc, p| acc + p.z + 1);
 
     assert_eq!(sum, 15);
+}
+
+#[test]
+fn test_example_basin_size() {
+    let map: Heightmap = EXAMPLE_STRING.try_into().unwrap();
+
+    assert_eq!(map.calculate_basin_size_for_lowpoint(&Point3D::new(1, 0, 1)), 3);
+    assert_eq!(map.calculate_basin_size_for_lowpoint(&Point3D::new(9, 0, 0)), 9);
+    assert_eq!(map.calculate_basin_size_for_lowpoint(&Point3D::new(2, 2, 5)), 14);
+    assert_eq!(map.calculate_basin_size_for_lowpoint(&Point3D::new(6, 4, 5)), 9);
 }
