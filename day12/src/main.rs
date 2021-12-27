@@ -1,4 +1,4 @@
-use std::{error::Error, collections::{HashSet, HashMap, hash_map::Entry}, hash::Hash, string};
+use std::{error::Error, collections::{HashSet, HashMap, hash_map::Entry}, hash::Hash, string, vec};
 
 use clap::{App, Arg};
 use petgraph::{Graph, Undirected, graph::NodeIndex};
@@ -62,6 +62,60 @@ impl CaveSystem {
 
         // prefix all found paths with our node and return them.
         found_paths.into_iter().map(|suffix| format!("{},{}", current_data.name, suffix).into()).collect()
+    }
+
+    fn calculate_task_two_paths(&self) -> Vec<String> {
+        self.dfs_task_two(self.start_index, HashSet::new(), None, &mut vec![])
+    }
+
+    fn dfs_task_two(&self, 
+        current_idx: NodeIndex, 
+        visited_small_caves: HashSet<NodeIndex>,
+        visited_twice: Option<NodeIndex>,
+        current_path: &mut Vec<String>
+    ) -> Vec<String> {
+        let mut found_paths: Vec<String> = vec![];
+        let current_data = self.graph.node_weight(current_idx).unwrap();
+        let neighbors = self.graph.neighbors(current_idx);
+        
+
+        let mut visited_small_with_current = visited_small_caves.clone();
+
+        current_path.push(current_data.name.clone());
+        let path_string: String = current_path.join(",");
+
+        // we reached the end node, return its name.
+        if current_idx == self.end_index {
+            current_path.pop();
+            return vec![path_string]
+        }
+
+        if current_data.is_small {
+            visited_small_with_current.insert(current_idx);
+        }
+
+        // we haven't reached the end node, dfs search!
+        for neighbor_idx in neighbors {
+            let neighbor_data = self.graph.node_weight(neighbor_idx).unwrap();
+            if neighbor_data.is_small {
+                // proceed into small cave if it has not yet been visited
+                if !visited_small_with_current.contains(&neighbor_idx) {
+                    found_paths.extend(self.dfs_task_two(neighbor_idx, visited_small_with_current.clone(), visited_twice, current_path));
+                } else {
+                    // enter the small cave a second time, but only once.
+                    if visited_twice.is_none() && neighbor_idx != self.start_index && neighbor_idx != self.end_index {
+                        found_paths.extend(self.dfs_task_two(neighbor_idx, visited_small_with_current.clone(), Some(neighbor_idx), current_path));
+                    }
+                }
+            } else {
+                // if the neighbour is a large cave, enter it
+                found_paths.extend(self.dfs_task_two(neighbor_idx, visited_small_with_current.clone(), visited_twice, current_path));
+            }
+        }
+
+        current_path.pop();
+        // prefix all found paths with our node and return them.
+        found_paths
     }
 }
 
@@ -141,6 +195,39 @@ fn main() {
 
     println!("Number of paths through the cave system not visiting small caves twice: {}", 
         cave_system.calculate_task_one_paths().len());
+    
+    println!("Number of paths through the cave system if one small cave is allowed to be visited twice: {}",
+        cave_system.calculate_task_two_paths().len());
+}
+
+#[test]
+fn test_loading() {
+    let cs: CaveSystem = EXAMPLE_SMALL.try_into().unwrap();
+
+    assert_eq!(cs.graph.node_count(), 6);
+    assert_eq!(cs.graph.edge_count(), 7);
+}
+
+#[test]
+fn test_task_one_simple_paths() {
+    let cs: CaveSystem = EXAMPLE_SMALL.try_into().unwrap();
+
+    let paths: HashSet<String> = HashSet::from_iter(cs.calculate_task_one_paths());
+    let expected_paths: HashSet<String> = HashSet::from_iter(EXAMPLE_SMALL_PATHS_TASK_ONE.lines().map(|x| x.into()));
+
+    assert_eq!(paths.len(), 10);
+    assert_eq!(paths, expected_paths);
+}
+
+#[test]
+fn test_task_two_simple_paths() {
+    let cs: CaveSystem = EXAMPLE_SMALL.try_into().unwrap();
+
+    let paths: HashSet<String> = HashSet::from_iter(cs.calculate_task_two_paths());
+    let expected_paths: HashSet<String> = HashSet::from_iter(EXAMPLE_SMALL_PATHS_TASK_TWO.lines().map(|x| x.into()));
+
+    assert_eq!(paths.len(), 36);
+    assert_eq!(paths, expected_paths);
 }
 
 #[cfg(test)]
@@ -154,7 +241,7 @@ A-end
 b-end";
 
 #[cfg(test)]
-const EXAMPLE_SMALL_PATHS: &str = 
+const EXAMPLE_SMALL_PATHS_TASK_ONE: &str = 
 r"start,A,b,A,c,A,end
 start,A,b,A,end
 start,A,b,end
@@ -166,21 +253,41 @@ start,b,A,c,A,end
 start,b,A,end
 start,b,end";
 
-#[test]
-fn test_loading() {
-    let cs: CaveSystem = EXAMPLE_SMALL.try_into().unwrap();
-
-    assert_eq!(cs.graph.node_count(), 6);
-    assert_eq!(cs.graph.edge_count(), 7);
-}
-
-#[test]
-fn test_simple_paths() {
-    let cs: CaveSystem = EXAMPLE_SMALL.try_into().unwrap();
-
-    let paths: HashSet<String> = HashSet::from_iter(cs.calculate_task_one_paths());
-    let expected_paths: HashSet<String> = HashSet::from_iter(EXAMPLE_SMALL_PATHS.lines().map(|x| x.into()));
-
-    assert_eq!(paths.len(), 10);
-    assert_eq!(paths, expected_paths);
-}
+#[cfg(test)]
+const EXAMPLE_SMALL_PATHS_TASK_TWO: &str =
+r"start,A,b,A,b,A,c,A,end
+start,A,b,A,b,A,end
+start,A,b,A,b,end
+start,A,b,A,c,A,b,A,end
+start,A,b,A,c,A,b,end
+start,A,b,A,c,A,c,A,end
+start,A,b,A,c,A,end
+start,A,b,A,end
+start,A,b,d,b,A,c,A,end
+start,A,b,d,b,A,end
+start,A,b,d,b,end
+start,A,b,end
+start,A,c,A,b,A,b,A,end
+start,A,c,A,b,A,b,end
+start,A,c,A,b,A,c,A,end
+start,A,c,A,b,A,end
+start,A,c,A,b,d,b,A,end
+start,A,c,A,b,d,b,end
+start,A,c,A,b,end
+start,A,c,A,c,A,b,A,end
+start,A,c,A,c,A,b,end
+start,A,c,A,c,A,end
+start,A,c,A,end
+start,A,end
+start,b,A,b,A,c,A,end
+start,b,A,b,A,end
+start,b,A,b,end
+start,b,A,c,A,b,A,end
+start,b,A,c,A,b,end
+start,b,A,c,A,c,A,end
+start,b,A,c,A,end
+start,b,A,end
+start,b,d,b,A,c,A,end
+start,b,d,b,A,end
+start,b,d,b,end
+start,b,end";
