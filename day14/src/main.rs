@@ -1,87 +1,126 @@
 extern crate clap;
 
-use std::{collections::{HashMap, hash_map::Entry}, iter};
+use std::{collections::HashMap};
 
 use clap::{App, Arg};
 use itertools::Itertools;
 
 struct Polymerizer {
-    rules: HashMap<(char, char), char>
+    rules: HashMap<(usize, usize), usize>,
+    characters_in_rules: Vec<char>
 }
 
 impl Polymerizer {
     fn new(rule_string: &str) -> Self {
-        let mut rules = HashMap::new();
+        let mut constructed = Self {
+            rules: HashMap::new(),
+            characters_in_rules: vec![],
+        };
         
         for line in rule_string.lines() {
             let (to_match, insertion) = line.split_once(" -> ").unwrap();
-            rules.insert(
-                (
-                    to_match.chars().nth(0).unwrap(), 
-                    to_match.chars().nth(1).unwrap()
-                ), 
-                insertion.chars().nth(0).unwrap());
+            let a = to_match.chars().nth(0).unwrap();
+            let b = to_match.chars().nth(1).unwrap();
+            let production = insertion.chars().nth(0).unwrap();
+
+            constructed.add_rule((a,b), production);
         }
 
-        return Self {
-            rules
-        };
+        return constructed;
     }
 
-    fn polymerize<'a, I>(&self, to_polymerize: I) -> impl Iterator<Item = char>
-    where
-        I: IntoIterator<Item = char>
-    {
-        let mut it = to_polymerize.into_iter();
+    fn add_rule(&mut self, (a, b): (char, char), production: char) {
+        let idx_a = self.get_or_insert_char_idx(a);
+        let idx_b = self.get_or_insert_char_idx(b);
+        let idx_p = self.get_or_insert_char_idx(production);
 
-        let first = it.next().unwrap();
-        let windows = iter::once(first).chain(it).tuple_windows();
+        self.rules.insert((idx_a, idx_b), idx_p);
+    }
 
-        let rules = self.rules.clone();
+    fn get_or_insert_char_idx(&mut self, value: char) -> usize {
+        match self.characters_in_rules.iter().position(|x| *x == value) {
+            Some(idx) => return idx,
+            None => {
+                self.characters_in_rules.push(value);
+                return self.characters_in_rules.len() - 1;
+            },
+        }
+    }
 
-        let result = 
-            iter::once(vec![first])
-            .chain(
-                windows.map(move |(first, second)| {
-                    let key: (char, char) = (first, second);
-                    if rules.contains_key(&key) {
-                        return vec![*rules.get(&key).unwrap(), second]
-                    } else {
-                        return vec![second]
-                    }
-                })
-            ).flatten();
-        
+    fn character_frequencies_after_steps(&self, initial_polymer: &str, steps: u32) -> HashMap<char, usize> {
+        let mut characters_in_polymer = self.characters_in_rules.clone();
+        for c in initial_polymer.chars() {
+            if characters_in_polymer.iter().position(|x| *x == c).is_none() {
+                characters_in_polymer.push(c);
+            }
+        }
+
+
+        let alphabet_size = characters_in_polymer.len();
+        let mut cache: HashMap<(usize, usize, u32), Vec<usize>> = HashMap::new();
+        let mut counts: Vec<usize> = vec![0; alphabet_size];
+
+
+        for (a, b) in initial_polymer.chars().tuple_windows() {
+            let idx_a = characters_in_polymer.iter().position(|x| *x == a).unwrap();
+            let idx_b = characters_in_polymer.iter().position(|x| *x == b).unwrap();
+            
+            let res = self.calculate_frequencies(idx_a, idx_b, steps - 1, alphabet_size, &mut cache);
+
+            for i in 0..alphabet_size {
+                counts[i] += res[i];
+            }
+        }
+
+        // also count the last character
+        let last_char_idx = characters_in_polymer.iter().position(|x| *x == initial_polymer.chars().last().unwrap()).unwrap();
+        counts[last_char_idx] += 1;
+
+        // Transform result into expected hashmap form
+        let mut result: HashMap<char, usize> = HashMap::new();
+        for i in 0..alphabet_size {
+            result.insert(characters_in_polymer[i], counts[i]);
+        }
+
         result
     }
 
-    fn calculate_character_frequencies_after_steps(&self, initial_polymer: &str, steps: u32) -> HashMap<char, usize> {
+    fn calculate_frequencies(
+            &self, 
+            idx_a: usize, 
+            idx_b: usize, 
+            depth: u32,
+            alphabet_size: usize,
+            result_cache: &mut HashMap<(usize, usize, u32), Vec<usize>>
+        ) -> Vec<usize> {
+        if result_cache.contains_key(&(idx_a, idx_b, depth)) {
+            return result_cache.get(&(idx_a, idx_b, depth)).unwrap().clone();
+        } else {
+            let mut result = vec![0; alphabet_size];
+            if self.rules.contains_key(&(idx_a, idx_b)) {
+                let idx_prod = *self.rules.get(&(idx_a, idx_b)).unwrap();
+                
+                if depth == 0 {
+                    result[idx_a] += 1;
+                    result[idx_prod] += 1;
+                } else {
+                    let left_recursion_result = self.calculate_frequencies(idx_a, idx_prod, depth - 1, alphabet_size, result_cache);
+                    let right_recursion_result = self.calculate_frequencies(idx_prod, idx_b, depth - 1, alphabet_size, result_cache);
 
-        let expected_polymer_length = initial_polymer.len() * 2usize.pow(steps);
-        println!("Expected polymer length: {}", expected_polymer_length);
-
-        let mut polymer_iter: Box<dyn Iterator<Item = char>> = Box::new(initial_polymer.chars().into_iter());
-        for _ in 0..steps {
-            polymer_iter = Box::new(self.polymerize(polymer_iter));
-        }
-
-        let mut counters: HashMap<char, usize> = HashMap::new();
-        for (n, c) in polymer_iter.enumerate() {
-            match counters.entry(c) {
-                Entry::Occupied(mut occupied) => {
-                    occupied.insert(occupied.get() + 1);
-                },
-                Entry::Vacant(vacant) => {
-                    vacant.insert(1);
-                },
+                    for i in 0..alphabet_size {
+                        result[i] += left_recursion_result[i];
+                        result[i] += right_recursion_result[i];
+                    }
+                }
+            } else {
+                // We don't have a rule, no recursion needed!
+                result[idx_a] += 1;
             }
 
-            if n % 100000000 == 0 {
-                println!("Progress: {}%", (n as f64) / (expected_polymer_length as f64) * 100f64);
-            }
+            // cache result
+            result_cache.insert((idx_a, idx_b, depth), result.clone());
+            return result;
         }
-
-        return counters;
     }
 }
 
@@ -106,7 +145,7 @@ fn main() {
     let (beginning_polymer, rule_string) = file_contents.trim_end().split_once("\n\n").unwrap();
 
     let polymerizer = Polymerizer::new(rule_string);
-    let counters = polymerizer.calculate_character_frequencies_after_steps(beginning_polymer, steps);
+    let counters = polymerizer.character_frequencies_after_steps(beginning_polymer, steps);
 
     let most_frequent = counters.values().max().unwrap();
     let least_frequent = counters.values().min().unwrap();
@@ -141,36 +180,30 @@ fn test_rule_parsing() {
     let (_, rule_string) = EXAMPLE_INPUT.trim_end().split_once("\n\n").unwrap();
     let polymerizer = Polymerizer::new(rule_string);
 
-    assert_eq!(*polymerizer.rules.get(&('C', 'H')).unwrap(), 'B');
-    assert_eq!(*polymerizer.rules.get(&('C', 'N')).unwrap(), 'C');
+    assert_eq!(*polymerizer.rules.get(&(0, 1)).unwrap(), 2);
+    assert_eq!(*polymerizer.rules.get(&(0, 3)).unwrap(), 0);
     assert_eq!(polymerizer.rules.len(), 16);
 }
 
 #[test]
-fn test_polymerization_without_rules() {
-    let polymerizer = Polymerizer::new("");
-    let once: String = polymerizer.polymerize("ABCDEF".chars()).collect();
-
-    assert_eq!(once, "ABCDEF");
-}
-
-#[test]
-fn test_example_explicit() {
+fn test_example_depth_1() {
     let (beginning_polymer, rule_string) = EXAMPLE_INPUT.trim_end().split_once("\n\n").unwrap();
     let polymerizer = Polymerizer::new(rule_string);
 
-    let once: String = polymerizer.polymerize(beginning_polymer.chars()).collect();
-    let twice: String = polymerizer.polymerize(polymerizer.polymerize(beginning_polymer.chars())).collect();
-    assert_eq!(once,  "NCNBCHB");
-    assert_eq!(twice, "NBCCNBBBCBHCB");
+    let character_counts = polymerizer.character_frequencies_after_steps(beginning_polymer, 1);
+
+    assert_eq!(*character_counts.get(&'B').unwrap(), 2);
+    assert_eq!(*character_counts.get(&'C').unwrap(), 2);
+    assert_eq!(*character_counts.get(&'H').unwrap(), 1);
+    assert_eq!(*character_counts.get(&'N').unwrap(), 2);
 }
 
 #[test]
-fn test_example_counters() {
+fn test_example_depth_10() {
     let (beginning_polymer, rule_string) = EXAMPLE_INPUT.trim_end().split_once("\n\n").unwrap();
     let polymerizer = Polymerizer::new(rule_string);
 
-    let character_counts = polymerizer.calculate_character_frequencies_after_steps(beginning_polymer, 10);
+    let character_counts = polymerizer.character_frequencies_after_steps(beginning_polymer, 10);
 
     assert_eq!(*character_counts.get(&'B').unwrap(), 1749);
     assert_eq!(*character_counts.get(&'C').unwrap(), 298);
